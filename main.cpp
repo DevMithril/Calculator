@@ -5,6 +5,16 @@
 using namespace std;
 
 /*
+Calcule la factorielle d'un nombre donné
+\param x nombre dont on cherche la factorielle
+\return la factorielle de x
+*/
+int fact(int x)
+{
+    return (x == 0 || x == 1) ? 1 : fact(x-1) * x;
+}
+
+/*
 Supprime les espaces d'une chaîne de caractères
 \param str la chaîne de caractères
 \return une nouvelle chaîne de caractère sans espaces
@@ -56,6 +66,15 @@ double convert_op_to_d(string op)
     int len_op = op.size();
     bool digit = true;
     int number_of_digits_after_dot = 0;
+
+    if (len_op >= 2)
+    {
+        if (op.at(1) == '!')
+        {
+            op = op.substr(0, 1) + op.substr(2, len_op);
+            return (double)fact((int)convert_op_to_d(op));
+        }
+    }
 
     for (int i = 1; i < len_op; i++)
     {
