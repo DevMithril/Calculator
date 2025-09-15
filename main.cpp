@@ -9,7 +9,7 @@ Calcule la factorielle d'un nombre donné
 \param x nombre dont on cherche la factorielle
 \return la factorielle de x
 */
-int fact(int x)
+long fact(long x)
 {
     return (x == 0 || x == 1) ? 1 : fact(x-1) * x;
 }
@@ -72,7 +72,7 @@ double convert_op_to_d(string op)
         if (op.at(1) == '!')
         {
             op = op.substr(0, 1) + op.substr(2, len_op);
-            return (double)fact((int)convert_op_to_d(op));
+            return (double)fact((long)convert_op_to_d(op));
         }
     }
 
