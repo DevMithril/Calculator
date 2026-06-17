@@ -1,15 +1,19 @@
 #include "evaluate.h"
 
-double strtodouble(const char *str, int beg, int end) {
-    double res;
+int strtodouble(const char *str, int beg, int end, double *res) {
     int len = end - beg;
     char sub_str[len + 1];
+
     for (int i = 0; i < len; i++) {
         sub_str[i] = str[i + beg];
     }
-    sub_str[len] = '\0';
-    sscanf(sub_str, "%lf", &res);
-    return res;
+
+    if (res && len > 0) {
+        sub_str[len] = '\0';
+        sscanf(sub_str, "%lf", res);
+        return 1;
+    }
+    return 0;
 }
 
 void get_binding_power(char op, float *l_bp, float *r_bp) {
@@ -24,200 +28,162 @@ void get_binding_power(char op, float *l_bp, float *r_bp) {
         *l_bp = 2;
         *r_bp = 2.1;
         break;
+    default :
+        *l_bp = *r_bp = 0;
     }
 }
 
-Token *combine(char op, Token *left, Token *right) {
-    Token *result;
-    if (left->type == ERROR) {
-        free(right);
+Token combine(char op, Token left, Token right) {
+    Token res;
+    if (left.type == ERROR) {
         return left;
     }
-    if (right->type == ERROR) {
-        free(left);
+    if (right.type == ERROR) {
         return right;
     }
-    result = new_token(VALUE, '\0', 0, 0);
     switch (op) {
     case '+' :
-        result->val = left->val + right->val;
+        res = token(VALUE, left.val + right.val);
         break;
     case '-' :
-        result->val = left->val - right->val;
+        res = token(VALUE, left.val - right.val);
         break;
     case '*' :
-        result->val = left->val * right->val;
+        res = token(VALUE, left.val * right.val);
         break;
     case '/' :
-        if (right->val == 0) {
-            result->type = ERROR;
-            result->err = DIVIDE_BY_ZERO;
+        if (right.val == 0) {
+            res = token(ERROR, DIVIDE_BY_ZERO);
         } else {
-            result->val = left->val / right->val;
+            res = token (VALUE, left.val / right.val);
         }
         break;
     }
-    free(left);
-    free(right);
-    return result;
+    return res;
 }
 
 int eval_str(const char *str, char *res, int str_len, int res_size) {
-    Token *chain = tokenize(str, str_len);
-    Exp *exp = parse(&chain, 0);
-    Token *result = eval(exp);
-    if (result->type == ERROR) {
-        return snprintf(res, res_size, STR_ERR(result->err));
+    Lexer *lexer = tokenize(str, str_len);
+    Exp *exp = parse(lexer, 0);
+    if (lexer->cur != lexer->size) {
+        free(lexer);
+        return snprintf(res, res_size, STR_ERR(PARENTHESE));
     }
-    return snprintf(res, res_size, "%lf", result->val); // TODO gerer les erreurs
+    free(lexer);
+    Token result = eval(exp);
+    if (result.type != ERROR) {
+        return snprintf(res, res_size, "%lf", result.val);
+    }
+    return snprintf(res, res_size, STR_ERR(result.err));
 }
 
-Token *tokenize(const char *str, int str_len) {
-    Token *chain = new_token(OPERATOR, '(', 0, 0);
-    Token *curr = chain;
+Lexer *tokenize(const char *str, int str_len) {
+    Token tokens[str_len];
+    int cur = 0;
+    double number;
 
-    for (int i = 0, n_beg = 0; i < str_len; i++, n_beg++) {
-        switch (str[i]) {
-        case '+' :
-        case '-' :
-        case '*' :
-        case '/' :
-            curr->next = new_token(VALUE, '\0', strtodouble(str, n_beg, i), 0);
-            n_beg = i;
-            curr = curr->next;
-        case '(' :
-        case ')' :
-            curr->next = new_token(OPERATOR, str[i], 0, 0);
-            curr = curr->next;
-            break;
-        case ' ' :
-        case '\0' :
-            curr->next = new_token(VALUE, '\0', strtodouble(str, n_beg, i), 0);
-            n_beg = i;
-            curr = curr->next;
-            break;
-        default :
-            if ((str[i] >= '0' && str[i] <= '9') || str[i] == '.') {
-                n_beg--;
-            } else {
-                free_chain(chain);
-                return new_token(ERROR, '\0', 0, SYNTHAX);
+    for (int i = 0, beg = 0; i < str_len; i++, beg++) {
+        if ((str[i] >= '0' && str[i] <= '9') || str[i] == '.') {
+            beg--;
+        } else {
+            if (strtodouble(str, beg, i, &number)) {
+                tokens[cur++] = token(VALUE, number);
             }
-            break;
+            if (str[i] != ' ' && str[i] != '\0'){
+                tokens[cur++] = token(OPERATOR, (double)(str[i]));
+            }
+            beg = i;
         }
     }
 
-    curr->next = new_token(OPERATOR, ')', 0, 0);
-    return chain;
+    Lexer *lexer = malloc(sizeof(Lexer) + sizeof(Token) * cur);
+    lexer->size = cur;
+    lexer->cur = 0;
+    for (int i = 0; i < cur; i++) {
+        lexer->tokens[i] = tokens[i];
+    }
+    return lexer;
 }
 
-Exp *parse(Token **chain, float min_bp) {
-    Token *t_left = *chain;
-    if (*chain == NULL) {
-        return new_exp(ATOM,
-                       new_token(ERROR, '\0', 0, SYNTHAX), 
-                       '\0', NULL, NULL);
-    }
-    *chain = (*chain)->next;
-    Exp *left, *right;
-    Token *t_op;
+Exp *parse(Lexer *lexer, float min_bp) {
+    Exp *left = NULL, *right = NULL;
     char op;
     float l_bp, r_bp;
-    if (t_left->type == OPERATOR) {
-        if (t_left->op == '(') {
-            free(t_left);
-            left = parse(chain, 0.0);
-            // if (!(*chain) || (*chain)->type != OPERATOR || (*chain)->op != ')') {
-            //     ;// TODO raise parenthese error
-            // }
-            if ((*chain)) {
-                t_left = *chain;
-                *chain = (*chain)->next;
-                free(t_left);
-            }
+
+    if (cur_token(lexer).type != OPERATOR) {
+        left = new_exp(ATOM, cur_token(lexer), 0, 0, 0);
+        lexer->cur++;
+    } else if (cur_token(lexer).op == '(') {
+        lexer->cur++;
+        left = parse(lexer, 0);
+        if (cur_token(lexer).type == OPERATOR && cur_token(lexer).op == ')') {
+            lexer->cur++;
         } else {
-            left = new_exp(ATOM, 
-                           new_token(ERROR, '\0', 0, BAD_TOKEN), 
-                           '\0', NULL, NULL);
-            free(t_left);
+            free_exp(left);
+            return new_exp(ATOM, token(ERROR, (double)(PARENTHESE)), 0, 0, 0);
         }
     } else {
-        left = new_exp(ATOM, t_left, '\0', NULL, NULL);
+        return new_exp(ATOM, token(ERROR, (double)(BAD_TOKEN)), 0, 0, 0);
     }
+
     while (1) {
-        t_op = *chain;
-        if (t_op == NULL) {
-            break;
-        } else if (t_op->type == ERROR) {
-            ;// TODO propager erreur
-        } else if (t_op->type != OPERATOR) {
-            ;// TODO raise error
-        } else if (t_op->op == ')') {
-            break;
+        if (lexer->cur == lexer->size ||
+            (cur_token(lexer).type == OPERATOR && cur_token(lexer).op == ')')) {
+            return left;
+        } else if (cur_token(lexer).type == ERROR) {
+            free_exp(left);
+            free_exp(right);
+            return new_exp(ATOM, cur_token(lexer), 0, 0, 0);
+        } else if (cur_token(lexer).type != OPERATOR) {
+            free_exp(left);
+            free_exp(right);
+            return new_exp(ATOM, token(ERROR, (double)(BAD_TOKEN)), 0, 0, 0);
+        } else {
+            op = cur_token(lexer).op;
+            lexer->cur++;
         }
-        op = t_op->op;
-        *chain = (*chain)->next;
-        free(t_op);
+
         get_binding_power(op, &l_bp, &r_bp);
         if (l_bp < min_bp) {
-            break;
+            return left;
         }
-        right = parse(chain, r_bp);
-        left = new_exp(OPERATION, NULL, op, left, right);
+        right = parse(lexer, r_bp);
+        left = new_exp(OPERATION, token(0,0), op, left, right);
     }
-    return left;
 }
 
-Token *eval(Exp *exp) {
-    Token *result = NULL;
+Token eval(Exp *exp) {
+    Token res;
     switch (exp->type) {
     case OPERATION :
-        result = combine(exp->op, eval(exp->left), eval(exp->right));
-        free(exp->left);
-        free(exp->right);
+        res = combine(exp->op, eval(exp->left), eval(exp->right));
         break;
     case ATOM :
-        result = exp->val;
+        res = exp->val;
+        free(exp);
         break;
     }
-    return result;
+    return res;
 }
 
-void free_chain(Token *chain) {
-    Token *del = NULL;
-    if (chain == NULL) {
-        return;
-    }
-
-    while (chain->next != NULL) {
-        del = chain->next;
-        chain->next = del->next;
-        free(del);
-    }
-    free(chain);
-}
-
-Token *new_token(token_t type, char op, double val, error_t err) {
-    Token *t = malloc(sizeof(Token));
-    if (t) {
-        t->type = type;
-        switch (type) {
-        case OPERATOR :
-            t->op = op;
-            break;
-        case VALUE :
-            t->val = val;
-            break;
-        case ERROR :
-            t->err = err;
-            break;
-        }
-        t->next = NULL;
+Token token(token_t type, double data) {
+    Token t;
+    t.type = type;
+    switch (type) {
+    case OPERATOR :
+        t.op = (char)data;
+        break;
+    case VALUE :
+        t.val = data;
+        break;
+    case ERROR :
+        t.err = (error_t)data;
+        break;
     }
     return t;
 }
 
-Exp *new_exp(exp_t type, Token *val, char op, Exp *left, Exp *right) {
+Exp *new_exp(exp_t type, Token val, char op, Exp *left, Exp *right) {
     Exp *e = malloc(sizeof(Exp));
     if (e) {
         e->type = type;
@@ -233,4 +199,14 @@ Exp *new_exp(exp_t type, Token *val, char op, Exp *left, Exp *right) {
         }
     }
     return e;
+}
+
+void free_exp(Exp *exp) {
+    if (exp) {
+        if (exp->type == OPERATION) {
+            free_exp(exp->left);
+            free_exp(exp->right);
+        }
+        free(exp);
+    }
 }

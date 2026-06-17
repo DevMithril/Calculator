@@ -72,10 +72,10 @@ void refresh_screen(Calc *calc) {
             mvaddch(y, x, ' ');
         }
     }
-    move(1, 1);
-    printw(calc->exp);
     move(2, 1);
     printw(calc->res);
+    move(1, 1);
+    printw(calc->exp);
     refresh();
 }
 
